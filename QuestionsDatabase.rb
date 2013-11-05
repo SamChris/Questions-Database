@@ -25,19 +25,55 @@ class User
     @id = options["id"]
     @fname = options["fname"]
     @lname = options["lname"]
+
+    save
+  end
+
+  def id=(value)
+    @id = value
+    save
+  end
+
+  def fname=(value)
+    @fname = value
+    save
+  end
+
+  def lname=(value)
+    @lname = value
+    save
+  end
+
+
+  def save
+    if self.id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, @fname, @lname)
+      INSERT INTO
+      users (fname, lname)
+      VALUES
+      (?, ?)
+      SQL
+      @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, @fname, @lname)
+      UPDATE
+      users (fname, lname)
+      VALUES
+      (?, ?)
+      SQL
+    end
   end
 
   def followed_questions
-    QuestionsDatabase.instance.execute()
+    Question_Follower.followed_questions_for_user_id(id)
+  end
+
+  def followers
+    Question_Follower.followers_for_question_id(id)
   end
 
   def create
     raise "already saved!" unless self.id.nil?
-
-    # execute an INSERT; the '?' gets replaced with the value name. The
-    # '?' lets us separate SQL commands from data, improving
-    # readability, and also safety (lookup SQL injection attack on
-    # wikipedia).
     QuestionsDatabase.instance.execute(<<-SQL, *params)
       INSERT INTO
         users (fname, lname)
@@ -95,6 +131,25 @@ class User
   def authored_replies
     Reply.find_by_user_id(self.id)
   end
+
+  def liked_questions
+    Question_Like.liked_questions_for_user_id(self.id)
+  end
+
+  def average_karma
+    QuestionsDatabase.instance.execute(<<-SQL, @id, @id)
+  SELECT COUNT(question_likes.question_id)/ COUNT (DISTINCT questions.id)
+    FROM questions
+    LEFT OUTER JOIN question_likes
+    ON questions.id = question_likes.question_id
+    WHERE question_likes.author_id = ? AND questions.author_id = ?
+    -- QuestionsDatabase.instance.execute(<<-SQL, @user_id)
+    -- (SELECT COUNT(questions.author_id)
+    -- FROM questions
+    -- WHERE questions.author_id = ?
+    SQL
+  end
+
 end
 
 class Question
@@ -112,6 +167,25 @@ class Question
     @title = options["title"]
     @body = options["body"]
     @author_id = options["author_id"]
+  end
+
+  def save
+    if self.id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, @title, @body, @author_id)
+      INSERT INTO
+      questions (title, body, author_id)
+      VALUES
+      (?, ?, ?)
+      SQL
+      @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, @title, @body, @author_id)
+      UPDATE
+      users (title, body, author_id)
+      VALUES
+      (?, ?, ?)
+      SQL
+    end
   end
 
   def create
@@ -143,6 +217,14 @@ class Question
     QuestionsDatabase.instance.execute("SELECT title FROM questions")
   end
 
+  def likers
+    Question_Like.likers_for_question_id(self.id)
+  end
+
+  def num_likes
+    Question_Like.num_likes_for_question_id(self.id)
+  end
+
   def self.find_by_author_id(author_id)
     questions_arr = QuestionsDatabase.instance.execute(<<-SQL, author_id)
     SELECT
@@ -153,6 +235,10 @@ class Question
       questions.author_id = ?
     SQL
     questions_arr
+  end
+
+  def self.most_liked(n)
+    QuestionLike.most_liked_questions(n)
   end
 
   def author
@@ -172,7 +258,6 @@ class Question
     SQL
 
   end
-
 
   def replies
     Reply.find_by_question_id(self.id)
@@ -194,6 +279,19 @@ class Question_Follower
     @id = options["id"]
     @follower_id = options["follower_id"]
     @question_id = options["question_id"]
+  end
+
+  def self.most_followed_questions(n)
+    most_followed_ques = QuestionsDatabase.instance.execute(<<-SQL, n)
+    SELECT questions.title, questions.body, COUNT(question_followers.question_id)
+    FROM questions
+    INNER JOIN question_followers
+    ON questions.id = question_followers.question_id
+    GROUP BY questions.title
+    -- HAVING COUNT(question_followers.question_id)
+    ORDER BY COUNT(question_followers.question_id) DESC
+    LIMIT ?
+    SQL
   end
 
   def self.followed_questions_for_user_id(user_id)
@@ -266,6 +364,25 @@ class Reply
     @question_id = options["question_id"]
     @reply_id = options["reply_id"]
     @replier_id = options["replier_id"]
+  end
+
+  def save
+    if self.id.nil?
+      QuestionsDatabase.instance.execute(<<-SQL, @reply_text, @question_id, @reply_id, @replier_id)
+      INSERT INTO
+      replies (reply_text, question_id, reply_id, replier_id)
+      VALUES
+      (?, ?, ?, ?)
+      SQL
+      @id = QuestionsDatabase.instance.last_insert_row_id
+    else
+      QuestionsDatabase.instance.execute(<<-SQL, @reply_text, @question_id, @reply_id, @replier_id)
+      UPDATE
+      users (reply_text, question_id, reply_id, replier_id)
+      VALUES
+      (?, ?, ?, ?)
+      SQL
+    end
   end
 
   def create
@@ -404,6 +521,54 @@ class Question_Like
     @author_id = options["author_id"]
   end
 
+
+  def self.liked_questions_for_user_id(user_id)
+    liked_questions = QuestionsDatabase.instance.execute(<<-SQL, user_id)
+      SELECT
+        question.title, question.body, question.author_id
+      FROM
+        questions
+      INNER JOIN question_likes ON
+        question_likes.question_id = questions.id
+      WHERE
+        question_likes.liker_id = ?
+      SQL
+
+    liked = liked_questions.map do |liked_question|
+      Question.new(liked_question)
+    end
+
+    liked
+  end
+
+  def self.likers_for_question_id(question_id)
+    likers_arr = QuestionsDatabase.instance.execute(<<-SQL, question_id)
+      SELECT
+        likers.id, likers.fname, likers.lname
+      FROM
+        users AS likers
+      INNER JOIN
+        question_likes ON question_likes.liker_id = likers.id
+      WHERE
+        question_likes.question_id = ?
+      SQL
+
+    likers = likers_arr.map do |liker_hash|
+      User.new(liker_hash)
+    end
+
+    likers
+  end
+
+  def self.num_likes_for_question_id(question_id)
+    QuestionsDatabase.instance.execute(<<-SQL, question_id)
+      SELECT COUNT(question_id) 'Num Likes'
+      FROM question_likes
+      GROUP BY question_id
+      HAVING question_id = ?
+    SQL
+  end
+
   def create
     raise "already saved!" unless self.id.nil?
 
@@ -429,12 +594,19 @@ class Question_Like
     self.new(query_arr[0])
   end
 
+  def self.most_liked_questions(n)
+    questions_arr = QuestionsDatabase.instance.execute(<<-SQL, n)
+  SELECT questions.title, COUNT(question_likes.question_id)
+    FROM questions
+    INNER JOIN question_likes
+    ON questions.id = question_likes.question_id
+    GROUP BY questions.title
+    ORDER BY COUNT(question_likes.question_id) DESC
+    LIMIT ?
+    SQL
+    questions_arr
+  end
 end
-
-
-
-
-
 
 
 

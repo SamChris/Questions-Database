@@ -83,7 +83,14 @@ VALUES
   (2, 4),
   (3, 2),
   (4, 3),
-  (5, 1);
+  (5, 1),
+  (1, 2),
+  (2, 2),
+  (4, 2),
+  (5, 2),
+  (1, 3),
+  (2, 3),
+  (3, 3);
 
 INSERT INTO
   replies (reply_text, question_id, reply_id, replier_id)
@@ -98,4 +105,9 @@ INSERT INTO
   question_likes (liker_id, question_id, author_id)
 VALUES
   (1, 2, (SELECT author_id FROM questions WHERE questions.id = 2)),
-  (2, 3, (SELECT author_id FROM questions WHERE questions.id = 3));
+  (2, 3, (SELECT author_id FROM questions WHERE questions.id = 3)),
+  (3, 2, (SELECT author_id FROM questions WHERE questions.id = 2)),
+  (4, 2, (SELECT author_id FROM questions WHERE questions.id = 2)),
+  (5, 3, (SELECT author_id FROM questions WHERE questions.id = 3)),
+  (1, 5, (SELECT author_id FROM questions WHERE questions.id = 5)),
+  (2, 4, (SELECT author_id FROM questions WHERE questions.id = 4));
